@@ -12,10 +12,10 @@
 ;************************
 ;                                                                     *
 ;    Filename:	    Terreneitor.asm                                   *
-;    Date:	    25/06/2024                                        *
+;    Date:	    XX/XX/2025                                        *
 ;    File Version:  Final                                             *
 ;                                                                     *
-;    Author: Octavio Baccino                                          *
+;    Author: Luca Baccino                                             *
 ;    Company:  -                                                      *
 ;                                                                     *
 ;                                                                     *
@@ -244,7 +244,7 @@ D_LOOP
     RETURN
     
 binario_a_bcd
-    MOVWF   bcd_unidad ; Carga el número binario a convertir
+    MOVWF   bcd_unidad ; Carga el nÃºmero binario a convertir
     CLRF    bcd_centena ; Borra registro
     CLRF    bcd_decena ; Borra registro
     
@@ -265,7 +265,7 @@ BCD_IncrementarDecenas
 BCD_IncrementarCentenas
     CLRF    bcd_decena ; Pone a cero las decenas
     INCF    bcd_centena,1 ; Incrementa las centenas
-    GOTO    BCD_Resta10 ; Resta 10 al número a convertir
+    GOTO    BCD_Resta10 ; Resta 10 al nÃºmero a convertir
     
 BIN_BCD_Fin
     SWAPF   bcd_decena,0 ; Intercambia nibles
