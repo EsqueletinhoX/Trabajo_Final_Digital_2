@@ -89,6 +89,10 @@ CONF
     CLRF    ANSEL   ; seleccion puertos digitales y analogicos
     CLRF    ANSELH
     
+    BANKSEL OSCCON
+    movlw   b'01100000'	    ;Oscilador interno a 4 MHz	
+    movwf   OSCCON
+    
     ; Configurar RE0 como entrada
     BANKSEL TRISE
     BSF     TRISE, 0        ; RE0 como entrada
