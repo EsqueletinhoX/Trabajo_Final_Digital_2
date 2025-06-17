@@ -1,4 +1,4 @@
-;************************
+;**
 ;   This file is a basic code template for assembly code generation   *
 ;   on the PIC16F887. This file contains the basic code               *
 ;   building blocks to build upon.                                    *
@@ -9,29 +9,29 @@
 ;   Refer to the respective PIC data sheet for additional             *
 ;   information on the instruction set.                               *
 ;                                                                     *
-;************************
+;**
 ;                                                                     *
 ;    Filename:	    Terreneitor.asm                                   *
-;    Date:	    XX/XX/2025                                        *
+;    Date:	    16/06/2025                                        *
 ;    File Version:  Final                                             *
 ;                                                                     *
 ;    Author: Luca Baccino                                             *
 ;    Company:  -                                                      *
 ;                                                                     *
 ;                                                                     *
-;************************
+;**
 ;                                                                     *
 ;    Files Required: P16F887.INC                                      *
 ;                                                                     *
-;************************
+;**
 ;                                                                     *
 ;    Notes:  -                                                        *
 ;                                                                     *
-;************************
+;**
 
 
-    PROCESSOR 16F887
-    #include <xc.inc>	; processor specific variable definitions
+	list		p=16f887	; list directive to define processor
+	#include	<p16f887.inc>	; processor specific variable definitions
 
 
 ; '__CONFIG' directive is used to embed configuration data within .asm file.
@@ -39,7 +39,7 @@
 ; See respective data sheet for additional information on configuration word.
 
 	__CONFIG    _CONFIG1, _LVP_OFF & _FCMEN_ON & _IESO_OFF & _BOR_OFF & _CPD_OFF & _CP_OFF & _MCLRE_ON & _PWRTE_ON & _WDT_OFF & _INTRC_OSC_NOCLKOUT
-	__CONFIG    _CONFIG2, _WRT_OFF & _BOR21V
+	__CONFIG    _CONFIG2, 0x3EFF
 
 bcd_unidad  EQU 0x70
 bcd_decena  EQU 0x71
@@ -55,11 +55,15 @@ DATO_RX	    EQU	0x30
 DIST_MIN    EQU .2
 DIST_MAX    EQU .99
 TMR0_CARGA58 EQU .220 ; cargar con 256-58
+ESTADO_MOVIMIENTO   EQU 0x7A
+DISTANCIA_BLOQUEO   EQU 0x7B
 
 #DEFINE	TRIGGER	PORTA,3
 #DEFINE	ECHO	PORTA,4
+   
+DISTANCIA_UMBRAL EQU 0x7D ; Valor leído por el ADC (distancia min)
 	
-;************************
+;**
 
 	ORG 0x00		  ; processor reset vector
 	GOTO CONF
@@ -68,22 +72,33 @@ TMR0_CARGA58 EQU .220 ; cargar con 256-58
 	GOTO ISR
 	
 TABLA
-    ADDWF	PCL,1
-    RETLW	0xFE ; cero
-    RETLW	0x30 ; uno
-    RETLW	0x6D ; dos
-    RETLW	0xF9 ; tres
-    RETLW	0x33 ; cuatro
-    RETLW	0x5B ; cinco
-    RETLW	0x1F ; seis
-    RETLW	0xF0 ; siete
-    RETLW	0xFF ; ocho
-    RETLW	0xF3 ; nueve
+    ADDWF   PCL,1
+    RETLW   0x3F ; 0
+    RETLW   0x06 ; 1
+    RETLW   0x5B ; 2
+    RETLW   0x4F ; 3
+    RETLW   0x66 ; 4
+    RETLW   0x6D ; 5
+    RETLW   0x7D ; 6
+    RETLW   0x07 ; 7
+    RETLW   0x7F ; 8
+    RETLW   0x6F ; 9
 	
 CONF
     BANKSEL ANSEL
     CLRF    ANSEL   ; seleccion puertos digitales y analogicos
     CLRF    ANSELH
+    
+    ; Configurar RE0 como entrada
+    BANKSEL TRISE
+    BSF     TRISE, 0        ; RE0 como entrada
+
+    ; Habilitar AN5 (RE0) como canal analógico
+    BANKSEL ANSEL
+    BSF     ANSEL, 5        ; AN5 habilitado
+
+    BANKSEL PORTE
+    CLRF    PORTE
     
     BANKSEL TRISA
     MOVLW   b'10110000'	; RC7/RX entrada
@@ -97,8 +112,11 @@ CONF
     CLRF    TRISA
     BCF	    TRISA,3 ; TRIGGER = SALIDA
     BSF	    TRISA,4 ; ECHO = ENTRADA
-    CLRF    TRISC   ; PUERTO C SALIDA MULTIPLEXAR
     CLRF    TRISD   ; PUERTO D DISPLAY
+    CLRF    TRISB
+    BSF	    TRISB, 2 ; RB2 --> INPUT
+    BSF	    TRISB, 3 ; RB3 --> INPUT
+    BSF	    TRISB, 5 ; RB5 --> INPUT
     
     BANKSEL RCSTA
     MOVLW   b'10010000'	; configuracion del USART para recepcion continua
@@ -107,6 +125,14 @@ CONF
     BANKSEL OPTION_REG	; configuracion timer 0
     MOVLW   B'00000000'
     MOVWF   OPTION_REG
+    
+    BANKSEL ADCON0
+    MOVLW   b'00010101'    ; Canal AN5, ADC encendido
+    MOVWF   ADCON0
+
+    BANKSEL ADCON1
+    MOVLW   b'00000000'   
+    MOVWF   ADCON1
     
     MOVLW   b'11000000'	; Habilitacion de las interrupciones en general
     MOVWF   INTCON
@@ -119,8 +145,13 @@ CONF
     CLRF    PORTD
     CLRF    W
     CLRF    CONT0
-	
+    CLRF    ESTADO_MOVIMIENTO
+    CLRF    DATO_RX
+    MOVLW   'S'
+    MOVWF   ESTADO_MOVIMIENTO
+    
 START 
+    BCF	    PIR1, RCIF
     CLRF    VAR_DISTANCIA ; limpio el registro donde gruardo la distancia
     BSF	    TRIGGER
     CALL    DELAY_10_MICROS
@@ -138,10 +169,13 @@ ECHO_ES_0
     GOTO    ECHO_ES_0 ; bule para cuando echo es 1
     BCF	    INTCON,5 ; Detengo interrupciones por timer 0
     CALL    MUESTRA_DISPLAY ; voy a mostrar en el display la distancia medida
+    MOVF    DISTANCIA_BLOQUEO, 0
+    BTFSC   STATUS, Z
+    CALL    RESTAURAR_MOVIMIENTO
     GOTO    START ; vuelvo a iniciar una medicion
     
 ISR ; rutina de interrupcion
-    BTFSC   PIR1,RCIF	; Interrupcio por recepcion?
+    BTFSC   PIR1,RCIF	; Interrupcion por recepcion?
     GOTO    RECEPCION  ; Si --> voy a decodificar dato recibido
     BTFSS   INTCON,2	; Interrupcion por tmr0?
     GOTO    FINALIZAR	; No --> termina ISR
@@ -152,8 +186,11 @@ ISR ; rutina de interrupcion
     RETFIE
     
 RECEPCION
+    CALL    DELAY5MS
+    CALL    DELAY5MS
     MOVF    RCREG,W		; Leo el dato recibido
     MOVWF   DATO_RX
+    MOVWF   ESTADO_MOVIMIENTO
     CALL    DECODIFICACION
     MOVLW   'A'
     MOVWF   TXREG
@@ -164,6 +201,11 @@ RECEPCION
     CALL    DELAY5MS
 FINALIZAR
     RETFIE
+    
+RESTAURAR_MOVIMIENTO
+    MOVF    ESTADO_MOVIMIENTO, W
+    CALL    DECODIFICACION
+    RETURN
     
 DECODIFICACION
     MOVF    DATO_RX,W
@@ -197,26 +239,35 @@ DECODIFICACION
     ; El otro esta conectado a A6 y A7
     
 MUESTRA_DISPLAY
-    MOVF    VAR_DISTANCIA,0
+    CALL    LECTURA_ADC
+    MOVF    DISTANCIA_UMBRAL, W
     SUBLW   .99
     BTFSS   STATUS,C
     CALL    OVERFLOW
-    MOVF    VAR_DISTANCIA,0
-    SUBLW   .10 ; comparo mi medicion con 10cm
+    MOVF    VAR_DISTANCIA, W
+    SUBWF   DISTANCIA_UMBRAL, W ; W = VAR_DISTANCIA - DISTANCIA_UMBRAL
     BTFSC   STATUS,C
-    CALL    STOP     ; si la medicion es menor que 15 enciendo una advertencia
-    MOVF    VAR_DISTANCIA,0
+    GOTO    BLOQUEO_ACTIVO     ; si la medicion es menor que X enciendo una advertencia
+    CLRF    DISTANCIA_BLOQUEO
+    GOTO    SIGUE_MUESTREO
+    
+BLOQUEO_ACTIVO
+    MOVLW   .1
+    MOVWF   DISTANCIA_BLOQUEO
+    CALL    STOP
+    
+SIGUE_MUESTREO
+    MOVF    DISTANCIA_UMBRAL,0
     CALL    binario_a_bcd ; convierto el valor de la distancia para mostrar por los displays
     MOVF    bcd_unidad,0
     CALL    TABLA
-    MOVWF   DISPLAY1
+    MOVWF   DISPLAY2
     MOVF    bcd_decena,0
     CALL    TABLA
-    MOVWF   DISPLAY2
-    MOVLW   .40
+    MOVWF   DISPLAY1
+    MOVF    .50
     MOVWF   CONTADOR3 ; contador para retrasar un poco el tiempo entre mediciones
-
-LOOP			
+LOOP
     BSF	    PORTC,3 ; rutina para multiplexar displays
     MOVF    DISPLAY1,0
     MOVWF   PORTD
@@ -229,6 +280,60 @@ LOOP
     BCF	    PORTC,2
     DECFSZ  CONTADOR3
     GOTO    LOOP
+    
+    ; Lectura por polling del botón en RB0 (activo a nivel bajo)
+    BTFSS   PORTB, 2        ; ¿Está presionado? (RB2 == 0)
+    GOTO    BOTON_POLL
+    BTFSS   PORTB, 3        ; ¿Está presionado? (RB3 == 0)
+    GOTO    BOTON_POLL
+    BTFSS   PORTB, 5        ; ¿Está presionado? (RB4 == 0)
+    GOTO    BOTON_POLL
+    GOTO    CONTINUAR
+
+BOTON_POLL
+    CALL    DELAY5MS        ; Antirrebote
+    CALL    DELAY5MS
+    CALL    DELAY5MS
+    CALL    DELAY5MS
+    BTFSS   PORTB, 2        ; Verifico si sigue presionado
+    GOTO    BOTON_ACCION    ; Sí, ejecuto acción
+    BTFSS   PORTB, 3
+    GOTO    BOTON_IZQ
+    BTFSS   PORTB, 5
+    GOTO    BOTON_DER
+    GOTO    CONTINUAR       ; No, fue un rebote
+    
+BOTON_IZQ
+    CALL    IZQUIERDA            ; Izquierda
+    MOVLW   'I'
+    MOVWF   ESTADO_MOVIMIENTO
+    MOVWF   DATO_RX
+    GOTO    CONTINUAR
+    
+BOTON_DER
+    CALL    DERECHA            ; Detengo motores
+    MOVLW   'D'
+    MOVWF   ESTADO_MOVIMIENTO
+    MOVWF   DATO_RX
+    GOTO    CONTINUAR
+
+BOTON_ACCION
+    CALL    STOP            ; Detengo motores
+    MOVLW   'S'
+    MOVWF   ESTADO_MOVIMIENTO
+    MOVWF   DATO_RX
+
+CONTINUAR
+    RETURN
+    
+LECTURA_ADC
+    BANKSEL ADCON0
+    BSF     ADCON0, GO     ; Iniciar conversión
+ADC_WAIT
+    BTFSC   ADCON0, GO
+    GOTO    ADC_WAIT       ; Esperar hasta que termine
+    MOVF    ADRESH, W
+    MOVWF   DISTANCIA_UMBRAL
     RETURN
     
 DELAY5MS
@@ -281,11 +386,16 @@ DELAY_10_MICROS
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     RETURN
     
 OVERFLOW
     MOVLW   .99
-    MOVWF   VAR_DISTANCIA
+    MOVWF   DISTANCIA_UMBRAL
     RETURN
     
 ADELANTE
@@ -311,7 +421,7 @@ IZQUIERDA
     BCF	PORTA,1
     BCF	PORTA,6
     BCF	PORTA,7
-    BSF	PORTA,0
+    BSF	PORTA,6
     RETURN
     
 DERECHA
@@ -319,7 +429,7 @@ DERECHA
     BCF	PORTA,1
     BCF	PORTA,6
     BCF	PORTA,7
-    BSF	PORTA,6
+    BSF	PORTA,0
     RETURN
     
 STOP
